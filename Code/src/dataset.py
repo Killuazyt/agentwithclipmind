@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 
 import torch
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision.transforms import functional as TF
 from torchvision.transforms.functional import InterpolationMode
 
@@ -142,6 +142,20 @@ class LEVIRMCIDataset(Dataset):
         }
 
 
+def _build_change_balanced_sampler(samples: List[Dict], pos_boost: float = 1.0) -> WeightedRandomSampler:
+    change_flags = [int(x.get("changeflag", 0)) for x in samples]
+    n_pos = sum(change_flags)
+    n_neg = len(change_flags) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        weights = [1.0] * len(change_flags)
+    else:
+        pos_w = (n_neg / n_pos) * max(pos_boost, 0.0)
+        neg_w = 1.0
+        weights = [pos_w if y == 1 else neg_w for y in change_flags]
+    weights = torch.tensor(weights, dtype=torch.double)
+    return WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
+
+
 def build_dataloaders(cfg: ExperimentConfig, label_encoder: LabelEncoder):
     train_dataset = LEVIRMCIDataset(
         label_path=cfg.label_path,
@@ -172,10 +186,12 @@ def build_dataloaders(cfg: ExperimentConfig, label_encoder: LabelEncoder):
     )
 
     pin_memory = torch.cuda.is_available()
+    train_sampler = _build_change_balanced_sampler(train_dataset.samples, cfg.sampler_pos_boost) if cfg.use_weighted_sampler else None
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
         num_workers=cfg.num_workers,
         pin_memory=pin_memory,
         drop_last=False,

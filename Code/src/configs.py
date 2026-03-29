@@ -1,5 +1,7 @@
 import argparse
+import os
 from dataclasses import dataclass, asdict
+from datetime import datetime
 from typing import List, Optional
 
 
@@ -9,6 +11,8 @@ class ExperimentConfig:
     label_path: str = "c:/Users/Killua/Desktop/clip+/LEVIR-MCI-dataset/label.json"
     output_dir: str = "c:/Users/Killua/Desktop/clip+/Code/outputs"
     checkpoint_dir: str = ""
+    append_timestamp_to_output: bool = True
+
 
     batch_size: int = 16
     num_workers: int = 4
@@ -26,7 +30,7 @@ class ExperimentConfig:
 
     lambda_obj: float = 1.0
     lambda_act: float = 1.0
-    lambda_loc: float = 0.5
+    lambda_loc: float = 3.0
 
     threshold: float = 0.5
     dropout: float = 0.2
@@ -35,6 +39,12 @@ class ExperimentConfig:
     object_loss_weight: Optional[List[float]] = None
     action_loss_weight: Optional[List[float]] = None
     location_loss_weight: Optional[List[float]] = None
+
+    use_focal_loss: bool = True
+    focal_gamma: float = 2.0
+
+    use_weighted_sampler: bool = True
+    sampler_pos_boost: float = 1.0
 
     debug_print_samples: int = 3
     save_metric: str = "change_f1"
@@ -45,8 +55,15 @@ class ExperimentConfig:
     pred_csv_name: str = "test_predictions.csv"
 
     def finalize(self) -> "ExperimentConfig":
+        if self.append_timestamp_to_output:
+            ts = datetime.now().strftime("run_%Y%m%d_%H%M%S")
+            self.output_dir = os.path.join(self.output_dir, ts)
         if not self.checkpoint_dir:
             self.checkpoint_dir = f"{self.output_dir}/checkpoints"
+        if self.action_loss_weight is None:
+            self.action_loss_weight = [1.0, 1.0, 1.0, 3.0]
+        if self.location_loss_weight is None:
+            self.location_loss_weight = [1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.5, 1.0]
         return self
 
     def to_dict(self):
@@ -74,6 +91,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--label-path", type=str, default=None)
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--checkpoint-dir", type=str, default=None)
+    parser.add_argument("--append-timestamp-to-output", type=str2bool, default=None)
 
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
@@ -99,6 +117,12 @@ def add_common_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--object-loss-weight", type=str, default=None)
     parser.add_argument("--action-loss-weight", type=str, default=None)
     parser.add_argument("--location-loss-weight", type=str, default=None)
+
+    parser.add_argument("--use-focal-loss", type=str2bool, default=None)
+    parser.add_argument("--focal-gamma", type=float, default=None)
+
+    parser.add_argument("--use-weighted-sampler", type=str2bool, default=None)
+    parser.add_argument("--sampler-pos-boost", type=float, default=None)
 
     parser.add_argument("--debug-print-samples", type=int, default=None)
     parser.add_argument("--save-metric", type=str, default=None)
@@ -141,12 +165,12 @@ def apply_args_to_config(cfg: ExperimentConfig, args: argparse.Namespace) -> Exp
 def get_train_config_from_args() -> ExperimentConfig:
     parser = build_train_parser()
     args = parser.parse_args()
-    cfg = ExperimentConfig().finalize()
+    cfg = ExperimentConfig()
     return apply_args_to_config(cfg, args)
 
 
 def get_test_config_from_args() -> ExperimentConfig:
     parser = build_test_parser()
     args = parser.parse_args()
-    cfg = ExperimentConfig().finalize()
+    cfg = ExperimentConfig()
     return apply_args_to_config(cfg, args)

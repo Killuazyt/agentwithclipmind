@@ -2,6 +2,7 @@ from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from src.configs import ExperimentConfig
 
@@ -20,12 +21,37 @@ def _to_vec_or_none(v, device: torch.device):
     return None
 
 
+class FocalWithLogitsLoss(nn.Module):
+    def __init__(self, gamma: float = 2.0, class_weight: Optional[torch.Tensor] = None, pos_weight: Optional[torch.Tensor] = None):
+        super().__init__()
+        self.gamma = gamma
+        self.class_weight = class_weight
+        self.pos_weight = pos_weight
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none", pos_weight=self.pos_weight)
+        prob = torch.sigmoid(logits)
+        pt = prob * targets + (1.0 - prob) * (1.0 - targets)
+        focal = ((1.0 - pt) ** self.gamma) * bce
+        if self.class_weight is not None:
+            focal = focal * self.class_weight
+        return focal.mean()
+
+
 def build_loss_functions(cfg: ExperimentConfig, device: torch.device) -> Dict[str, nn.Module]:
-    """构建损失函数（预留不平衡权重接口）。"""
+    """构建损失函数（支持类权重 + Focal Loss）。"""
     change_pos_weight = _to_tensor_or_none(cfg.change_loss_pos_weight, device)
     object_weight = _to_vec_or_none(cfg.object_loss_weight, device)
     action_weight = _to_vec_or_none(cfg.action_loss_weight, device)
     location_weight = _to_vec_or_none(cfg.location_loss_weight, device)
+
+    if cfg.use_focal_loss:
+        return {
+            "change": nn.BCEWithLogitsLoss(pos_weight=change_pos_weight),
+            "object": FocalWithLogitsLoss(gamma=cfg.focal_gamma, class_weight=object_weight),
+            "action": FocalWithLogitsLoss(gamma=cfg.focal_gamma, class_weight=action_weight),
+            "location": FocalWithLogitsLoss(gamma=cfg.focal_gamma, class_weight=location_weight),
+        }
 
     return {
         "change": nn.BCEWithLogitsLoss(pos_weight=change_pos_weight),
@@ -62,3 +88,4 @@ def compute_loss(
         "location_loss": location_loss.detach(),
     }
     return total_loss, loss_items
+
